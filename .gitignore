@@ -1,0 +1,11 @@
+node_modules/
+uploads/
+screenshots/
+api_keys.txt
+accounts.txt
+.env
+.DS_Store
+*.js.map
+*.mp4
+*.jpg
+*.png

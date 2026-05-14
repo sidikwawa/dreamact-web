@@ -301,11 +301,20 @@
                     throw new Error(data.error || 'Failed to start task');
                 }
 
-                const taskId = data.taskId;
-                console.log(`Task started: ${taskId} using key ${data.usedKey}`);
+                // BOT MODE: langsung dapat resultUrl tanpa polling
+                if (data.mode === 'bot' && data.resultUrl) {
+                    showResult(data.resultUrl);
+                    return;
+                }
 
-                // Polling Status
-                await pollTask(taskId);
+                // API MODE: dapat taskId, lakukan polling
+                if (data.taskId) {
+                    statusText.innerText = 'Task diterima, menunggu hasil AI...';
+                    await pollTask(data.taskId);
+                    return;
+                }
+
+                throw new Error('Response tidak valid dari server');
 
             } catch (err) {
                 showError(err.message);
@@ -313,51 +322,56 @@
         });
 
         async function pollTask(taskId) {
-            const maxAttempts = 120; // 5 minutes max (if polling every 2.5s)
+            const maxAttempts = 240; // 10 menit max (polling setiap 2.5 detik)
             let attempts = 0;
+            const statusMessages = [
+                'Menunggu giliran di antrean server AI...',
+                'AI sedang menganalisis video referensi...',
+                'AI sedang menerapkan gerakan ke gambar...',
+                'Hampir selesai, sedang merender frame terakhir...'
+            ];
 
             const interval = setInterval(async () => {
                 attempts++;
-                statusText.innerText = `Generating AI Animation... (Attempt ${attempts})`;
+                const msgIdx = Math.min(Math.floor(attempts / 20), statusMessages.length - 1);
+                statusText.innerText = `${statusMessages[msgIdx]} (${attempts})`;
 
                 try {
                     const res = await fetch(`/api/task/${taskId}`);
                     const data = await res.json();
-                    
-                    // Task status mapping: 1=Pending, 2=Running, 3=Success, 4=Failed
-                    const taskInfo = data.task || data;
-                    
+
+                    // Task status: 1=Pending, 2=Running, 3=Success, 4=Failed
+                    const taskInfo = data.data?.task || data.task || data;
+
                     if (taskInfo.status === 3) {
                         clearInterval(interval);
-                        
-                        // Try to find the output video URL. Usually in data.videos[0].videoUrl
+
                         let outputUrl = null;
-                        if (data.videos && data.videos.length > 0) {
-                            outputUrl = data.videos[0].videoUrl;
-                        } else if (data.task && data.task.resultUrl) {
-                            outputUrl = data.task.resultUrl;
+                        if (data.data?.videos?.length > 0) {
+                            outputUrl = data.data.videos[0].videoUrl || data.data.videos[0].url;
+                        } else if (data.data?.task?.resultUrl) {
+                            outputUrl = data.data.task.resultUrl;
                         } else {
-                            // Fallback stringify search
+                            // Fallback: cari URL mp4 di response
                             const str = JSON.stringify(data);
-                            const match = str.match(/https:\/\/[^"']+\.mp4/);
+                            const match = str.match(/https?:\/\/[^"'\\]+\.mp4[^"'\\]*/i);
                             if (match) outputUrl = match[0];
                         }
 
                         if (outputUrl) {
                             showResult(outputUrl);
                         } else {
-                            showError("Task succeeded but output video URL not found in response.");
+                            showError('Proses selesai tapi URL video tidak ditemukan. Raw: ' + JSON.stringify(data).substring(0, 200));
                         }
-                    } else if (taskInfo.status === 4 || taskInfo.status < 0) {
+                    } else if (taskInfo.status === 4 || (taskInfo.status !== undefined && taskInfo.status < 0)) {
                         clearInterval(interval);
-                        showError("Task failed during generation: " + (taskInfo.reason || 'Unknown error'));
+                        showError('Gagal diproses: ' + (taskInfo.reason || taskInfo.errorCode || 'Unknown error'));
                     } else if (attempts >= maxAttempts) {
                         clearInterval(interval);
-                        showError("Task timed out. It might still be processing.");
+                        showError('Timeout 10 menit. Video mungkin masih diproses di server.');
                     }
                 } catch (e) {
-                    console.error("Polling error", e);
-                    // keep trying until maxAttempts
+                    console.error('Polling error:', e);
                 }
 
             }, 2500);

@@ -7,5 +7,5 @@ accounts.txt
 .DS_Store
 *.js.map
 *.mp4
-*.jpg
-*.png
+bundle.js
+test_*.js
